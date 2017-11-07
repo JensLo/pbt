@@ -4,7 +4,7 @@ import numpy as np
 import time
 
 import pandas as pd
-from storage import SafeHDFStore
+from .storage import SafeHDFStore
 
 from qstrader.event import TickEvent, BarEvent, EventType
 
@@ -46,8 +46,6 @@ class Ticker(object):
         self.interval = interval 
         self._interval = timeframes[interval]
         self.timeframes = [tf for tf in bartimeframes if tf in self._ex.timeframes]
-        self._ex_timeframes = [self._ex.timeframes[tf] for tf in bartimeframes 
-                               if tf in self._ex.timeframes]
         self._timeframes = [timeframes[tf] for tf in bartimeframes if tf in self._ex.timeframes]
         self._lasttimes = [int(time.time()) for tf in bartimeframes]
         self._queue = queue
@@ -92,7 +90,7 @@ class Ticker(object):
 
             events.append( TickEvent(symbol, now, *self._get_ask_bid(asks, bids)) )
 
-            for _lasttime, _timeframe, timeframe in zip(self._lasttimes, self._timeframes, self._ex_timeframes): 
+            for _lasttime, _timeframe, timeframe in zip(self._lasttimes, self._timeframes, self.timeframes): 
                 if now >= _lasttime + _timeframe:
                     bar = self._ex.fetch_ohlcv( symbol, timeframe, since=_lasttime*1000, limit=1, )
                     events.append( BarEvent(symbol, bar[-1][0]/1000, _timeframe, *(bar[-1][1:])) )
@@ -116,6 +114,7 @@ class Ticker(object):
 
 
     def _store(self, events, order_book):
+        global timeframes
         with SafeHDFStore(self._storage) as store:
             # Only put inside this block the code which operates on the store
             for event in events:
@@ -126,11 +125,13 @@ class Ticker(object):
                     period = self.interval
 
                 elif event.type == EventType.BAR:
-                    key = event.ticker+'/bar/'+event.period
+                    key = event.ticker+'/bar/'+ timeframes.keys()[list(timeframes.values()).index(event.period)]
                     data = [event.time, event.open_price, event.high_price, 
                             event.low_price, event.close_price, event.volume]
                     columns = ['time', 'open', 'high', 'low', 'close', 'volume']
-                    period = event.period
+                    period = timeframes.keys()[list(timeframes.values()).index(event.period)]
+
+                print(period)
 
                 store.add(key, data, columns)
                 #store.get_storer(key).attrs.period = period
@@ -146,23 +147,23 @@ class Ticker(object):
                                            bins=np.linspace(b_min, bids[0,0], 150), density=False)
                 
                 _key = key+'/asks'
-                data = [order_book[symbol]['time'] + asks
-                columns = ['time'] + [str(i) for i in range(len(asks))]
+                data = [order_book[symbol]['time']] + asks
+                columns = ['time'] + ['idx_'+str(i) for i in range(len(asks))]
                 store.add(_key, data, columns)
 
                 _key = key+'/ask_bins'
-                data = [order_book[symbol]['time'] + abins[:-1]
-                columns = ['time'] + [str(i) for i in range(len(asks))]
+                data = [order_book[symbol]['time']] + abins[:-1]
+                columns = ['time'] + ['idx_'+str(i) for i in range(len(asks))]
                 store.add(_key, data, columns)
 
                 _key = key+'/bids'
-                data = [order_book[symbol]['time'] + bids
-                columns = ['time'] + [str(i) for i in range(len(bids))]
+                data = [order_book[symbol]['time']] + bids
+                columns = ['time'] + ['idx_'+str(i) for i in range(len(bids))]
                 store.add(_key, data, columns)
 
                 _key = key+'/bid_bins'
-                data = [order_book[symbol]['time'] + bbins[1:]
-                columns = ['time'] + [str(i) for i in range(len(bids))]
+                data = [order_book[symbol]['time']] + bbins[1:]
+                columns = ['time'] + ['idx_'+str(i) for i in range(len(bids))]
                 store.add(_key, data, columns)
 
 

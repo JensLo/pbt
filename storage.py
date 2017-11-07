@@ -3,6 +3,7 @@
 import numpy as np
 import os
 import time
+import sys
 
 from pandas import HDFStore, DataFrame
 
@@ -29,8 +30,13 @@ class SafeHDFStore(HDFStore):
 
 
     def add(self, key, data, columns):
-    	df = DataFrame([{col:v for v,col in zip(data,columns)}])
-    	if '/'+key in self.keys():
-    		self.append(key, df, format='table', data_columns=True)
-    	else:
-    		self.put(key, df, format='table', data_columns=True)
+        print('Start Storing:', key)
+        sys.stdout.flush()
+        df = DataFrame([{col:v for v,col in zip(data,columns)}])
+        if '/'+key in self.keys():
+            self.append(key, df, format='table', data_columns=True, index=False)
+        else:
+            self.put(key, df, format='table', data_columns=True, index=False)
+        print('Finished Storing:', key)
+        sys.stdout.flush()
+        print()
