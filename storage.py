@@ -5,13 +5,16 @@ import os
 import time
 import sys
 
-from pandas import HDFStore, DataFrame
+from tables.file import File as PyTablesFile
+from tables import Col
+from numpy import dtype
 
 
-class SafeHDFStore(HDFStore):
-    def __init__(self, *args, **kwargs):
+class SafeHDFStore(PyTablesFile):
+    def __init__(self, filename, mode="r", title="",
+                 root_uep="/", filters=None, **kwargs):
         probe_interval = kwargs.pop("probe_interval", 1)
-        self._lock = "%s.lock" % args[0]
+        self._lock = "%s.lock" % filename
         while True:
             try:
                 self._flock = os.open(self._lock, os.O_CREAT |
@@ -21,22 +24,87 @@ class SafeHDFStore(HDFStore):
             except FileExistsError:
                 time.sleep(probe_interval)
 
-        HDFStore.__init__(self, *args, **kwargs)
+        super(SafeHDFStore, self).__init__(filename, mode, title, 
+                                           root_uep, filters, **kwargs)
 
     def __exit__(self, *args, **kwargs):
-        HDFStore.__exit__(self, *args, **kwargs)
-        os.close(self._flock)
-        os.remove(self._lock)
+        _flock = self._flock
+        _lock = self._lock
+        super(SafeHDFStore, self).__exit__(*args, **kwargs)
+        os.close(_flock)
+        os.remove(_lock)
 
 
-    def add(self, key, data, columns):
+    def add(self,key, data, columns):
         print('Start Storing:', key)
+        if not key.startswith('/'):
+            key = '/'+key
         sys.stdout.flush()
-        df = DataFrame([{col:v for v,col in zip(data,columns)}])
-        if '/'+key in self.keys():
-            self.append(key, df, format='table', data_columns=True, index=False)
+        if not self._table_exists(key):
+            table = self._createTable(key, columns, data)
         else:
-            self.put(key, df, format='table', data_columns=True, index=False)
+            table = self._getTable(key)
+
+        for col, value in zip(columns, data):
+            if col not in ('time', 'date', 't'):
+                table.row[col] = int(value*1e8)
+            else:
+                table.row[col] = int(value)
+
+        table.row.append()
+        table.flush()
         print('Finished Storing:', key)
         sys.stdout.flush()
         print()
+
+
+    def _getGroup(self, key):
+        paths = key.split('/')
+        path='/'
+        for p in paths[:-1]:
+            if not len(p):
+                continue
+            new_path = path
+            if not path.endswith('/'):
+                new_path += '/'
+            new_path += p
+            try:
+                group = self.get_node(new_path)
+            except:
+                group = self.create_group(path, p)
+            path = new_path
+        return group
+
+    def _getTable(self, key):
+        group = self._getGroup(key)
+        return self.get_node(key)
+
+    def _table_exists(self, key):
+        group = self._getGroup(key)
+        key = key.split('/')[-1]
+        return key in group._v_children.keys()
+
+
+    def _createTable(self, key, columns, data):
+        group = self._getGroup(key)
+        key = key.split('/')[-1]
+        des = self._getDescription(columns, data)
+        return self.create_table(group, key, des)
+
+
+    def _getDescription(self,columns, data):
+        tmp = {}
+        for col,value in zip(columns, data):
+            
+            if not isinstance(value, (int, float, complex)):
+                value = '*'*64
+
+            elif np.asarray(value).dtype != object:
+                if isinstance(value, (int, float, complex)):
+                    tmp[col] = Col.from_dtype(dtype(dtype('int64')))
+                else:
+                    tmp[col] = Col.from_dtype(dtype(np.asarray(value).dtype))
+
+        return tmp
+
+
