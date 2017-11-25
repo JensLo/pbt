@@ -10,6 +10,9 @@ from tables import Col, Int64Col, StringCol,
 from numpy import dtype
 
 
+class SafeHDFStoreException(Exception):
+    pass
+
 class SafeHDFStore(PyTablesFile):
     def __init__(self, filename, mode="r", title="",
                  root_uep="/", filters=None, **kwargs):
@@ -27,6 +30,8 @@ class SafeHDFStore(PyTablesFile):
         super(SafeHDFStore, self).__init__(filename, mode, title, 
                                            root_uep, filters, **kwargs)
 
+        self.__dict__.update(self.getTables())
+
     def __exit__(self, *args, **kwargs):
         _flock = self._flock
         _lock = self._lock
@@ -36,13 +41,46 @@ class SafeHDFStore(PyTablesFile):
 
 
     def __getitem__(self, key):
+        if key.count('/')==0:
+            if not key.startswith('/'):
+            key = '/'+key
+
         return self._getTable(key)
 
+            
+    def __setitem__(self, key, value):
+        if isinstance(value, tables.table.Table):
+            if key.count('/')==0:
 
-    
+        else:
+            raise SafeHDFStoreException(
+                'Value needs to be of type "tables.table.Table" but is "%s".' %(type(value))
+            )
+            break
+            
+        if key in self.keys():
+            self.__D__[key] = value
+            return
+        if key.count('/')==0:
+            _key = self._getDeviceChannelName(key)
+            if _key is None:
+                raise KeyError('Channel ' + str(key) + ' not found')
+                return key
+            else:
+                key = _key
+
+        key = key.split('/')
+        try:
+            self.__D__[key[0]][key[1]] = value
+        except:
+            if key[0] not in self.keys():
+                self.__D__[key[0]] = channellist()
+                self.__dict__[key[0]] = self.__D__[key[0]]
+            self.__D__[key[0]][key[1]] = value
 
 
-    def add(self,key, data, columns):
+
+    def add(self, key, data, columns):
         print('Start Storing:', key)
         sys.stdout.flush()
         if not self._table_exists(key):
