@@ -28,94 +28,179 @@ timeframes = {
                 '2w': 21600*60,
             }
 
-class Tickers(object):
-
-    def __init__(self, tickers):
-        self.tickers = tickers
-
+class TickerException(Exception):
+    pass
 
 class Ticker(object):
 
-    def __init__(self, exchange, symbols, interval, bartimeframes, queue, tick_storage, volumn=0):
+    def __init__(self, exchange, symbol, bartimeframes, tick_storage=None):
         global timeframes
-        self._ex = exchange
-        self._ex.load_markets()
-        self._symbols = exchange.symbols
-        self.exchange = exchange.name
-        self.symbols =  [sym for sym in symbols if sym in self._ex.symbols]
-        self.interval = interval 
-        self._interval = timeframes[interval]
-        self.timeframes = [tf for tf in bartimeframes if tf in self._ex.timeframes]
-        self._timeframes = [timeframes[tf] for tf in bartimeframes if tf in self._ex.timeframes]
+        self.exchange = exchange
+        self.exchange.load_markets()
+        self.timeframes = []
+        self._timeframes = []
+
+        if symbol in self._ex.symbols:
+            self.symbol =  symbol
+        except:
+            raise TickerException(
+                'Symbol "%s" not available on exchange "%s".' %(symbol, self.exchange.name)
+            )
+
+        for timeframe in bartimeframes:
+            self.add_timeframe(timeframe)
+
         self._lasttimes = [int(time.time()-5) for tf in bartimeframes]
-        self._queue = queue
-        self._vol = volumn
-        #self._storage = SafeHDFStore(tick_storage, mode='a')
         self._storage = tick_storage
 
 
-    def add_symbol(self, symbol):
-        if (symbol not in self.symbols) and (symbol in self._ex.symbols):
-            self.symbols.append(symbol)
+    def add_timeframe(self, timeframe):
+        if timeframe in self._ex.timeframes:
+            self.timeframes.append(timeframe)
+            self._timeframes.append(timeframes[timeframe])
+        else:
+            raise TickerException(
+                'Timeframe "%s" not available on exchange "%s".' %(timeframes[timeframe], self.exchange.name)
+            )
 
-    def remove_symbol(self, symbol):
+    def remove_timeframe(self, timeframe):
+        if timeframe in self.timeframes:
+            self.timeframes.remove(timeframe)
+            self._timeframes.remove(timeframes[timeframe])
+
+
+    def fetch_bar(self):
+        now = time.time()
+        i=0
+        bars = []
+        for _lasttime, _timeframe, timeframe in zip(self._lasttimes, self._timeframes, self.timeframes): 
+            if now >= _lasttime + _timeframe:
+                bar = exchange.fetch_ohlcv( symbol, timeframe, since=_lasttime*1000, limit=1, )
+                events.append( BarEvent(symbol, bar[-1][0]/1000, _timeframe, *(bar[-1][1:])) )
+                ticker._lasttimes[i] = int(bar[-1][0]/1000)
+                i+=1
+
+                if self._storage is not None:
+                    with SafeHDFStore(self._storage, mode='a') as store:
+                        key = self.exchange.name+'/'+self.symbol+'/bar/'+ list(timeframes.keys())[list(timeframes.values()).index(event.period)]
+                        bar[-1][0] /= 1000
+                        columns = ['time', 'open', 'high', 'low', 'close', 'volume']
+                        store.add(key, bar, columns)
+
+
+    def fetch_orderbook(self):
+        order_book = self.exchange.fetch_order_book(self.symbol, {'depth':100})
+        if self._storage is not None:
+            with SafeHDFStore(self._storage, mode='a') as store:
+                key = self.exchange.name+'/'+self.symbol+'/order_book'
+                asks, bids = np.array(order_book['asks']), np.array(order_book['bids'])
+                a_max = asks[:,0][asks[:,0]<=asks[0,0]*1.15][-1]
+                b_min = bids[:,0][bids[:,0]<=bids[0,0]*0.85][-1]
+                asks, abins = np.histogram(asks[:,0], weights=asks[:,1], 
+                                           bins=np.linspace(asks[0,0], a_max, 150), density=False)
+                bids, bbins = np.histogram(bids[:,0], weights=bids[:,1], 
+                                           bins=np.linspace(b_min, bids[0,0], 150), density=False)
+                _key = key+'/asks'
+                data = [order_book[symbol]['time']] + asks
+                columns = ['time'] + ['idx_'+str(i) for i in range(len(asks))]
+                store´.add(_key, data, columns)
+
+                _key = key+'/ask_bins'
+                data = [order_book[symbol]['time']] + abins[:-1]
+                columns = ['time'] + ['idx_'+str(i) for i in range(len(asks))]
+                store.add(_key, data, columns)
+
+                _key = key+'/bids'
+                data = [order_book[symbol]['time']] + bids
+                columns = ['time'] + ['idx_'+str(i) for i in range(len(bids))]
+                store.add(_key, data, columns)
+
+                _key = key+'/bid_bins'
+                data = [order_book[symbol]['time']] + bbins[1:]
+                columns = ['time'] + ['idx_'+str(i) for i in range(len(bids))]
+                store.add(_key, data, columns)
+
+
+    def get_bar(self, dt=None):
+        pass
+
+    def get_tick(self, dt=None):
+        pass
+
+    def get_order_book(self, dt=None):
+        if dt is None:
+            order_book = self.exchange.fetch_order_book(self.symbol, {'depth':100})
+            return np.array(order_book[symbol]['asks']), np.array(order_book[symbol]['bids'])
+        else:
+
+
+
+class tick_handler(object):
+
+    def __init__(self, interval, bartimeframes, queue=None, tick_storage=None, volumn=0):
+        self.interval = interval
+        self.bartimeframes = bartimeframes
+        self._queue = queue
+        self._vol = volumn
+        self._storage = tick_storage
+        self.tickers = dict()
+
+
+    def add_symbol(self, exchange, symbol):
+        key = exchange.name+':'+symbol
+        if (key not in self.tickers):
+            new_ticker = Ticker(exchange, symbol, self.bartimeframes)
+            self.tickers[key] =Ticker(exchange, symbol, self.bartimeframes)
+
+    def remove_symbol(self, exchange, symbol):
+        key = exchange.name+':'+symbol
         try:
-            self.symbols.remove(symbol)
+            del self.tickers[key]
         except:
             pass
 
     def add_timeframe(self, timeframe):
-        if (timeframe not in self.timeframes) and (timeframe in self._ex.timeframes):
-            self.timeframes.append(timeframes)
-            self._ex_timeframes.append(self._ex.timeframes[timeframe])
-            self._timeframes.append(timeframes[timeframe])
+        if timeframe not in self.bartimeframes:
+            self.bartimeframes.append(timeframe)
+            for ticker in self.tickers.values():
+                ticker.add_timeframe(timeframe)
+            
 
     def remove_timeframe(self, timeframe):
-        try:
-            self.timeframes.remove(timeframe)
-            self._ex_timeframes.remove(self._ex.timeframes[timeframe])
-            self._timeframes.remove(timeframes[timeframe])
-        except:
-            pass
+        if (timeframe in self.bartimeframes):
+            self.bartimeframes.remove(timeframe)
+            for ticker in self.tickers.values():
+                ticker.remove_timeframe(timeframe)
 
 
     def update(self):
         events = []
         order_book = {}
-        for symbol in self.symbols:
+        for key, ticker in self.tickers.iter_items():
             now = int(time.time())
-            order_book[symbol] = self._ex.fetch_order_book(symbol, {'depth':100})
+            symbol = ticker.symbol
+            exchange = ticker.exchange
+            order_book[symbol] = exchange.fetch_order_book(symbol, {'depth':100})
             order_book[symbol]['time'] = now
 
             asks, bids = np.array(order_book[symbol]['asks']), np.array(order_book[symbol]['bids'])
 
             events.append( TickEvent(symbol, now, *self._get_ask_bid(asks, bids)) )
             i=0
-            for _lasttime, _timeframe, timeframe in zip(self._lasttimes, self._timeframes, self.timeframes): 
+            for _lasttime, _timeframe, timeframe in zip(ticker._lasttimes, ticker._timeframes, ticker.timeframes): 
                 if now >= _lasttime + _timeframe:
-                    bar = self._ex.fetch_ohlcv( symbol, timeframe, since=_lasttime*1000, limit=1, )
+                    bar = exchange.fetch_ohlcv( symbol, timeframe, since=_lasttime*1000, limit=1, )
 
                     events.append( BarEvent(symbol, bar[-1][0]/1000, _timeframe, *(bar[-1][1:])) )
-                    self._lasttimes[i] = int(bar[-1][0]/1000)
+                    ticker._lasttimes[i] = int(bar[-1][0]/1000)
                     i+=1
 
-            print(self._lasttimes)
+            print(ticker._lasttimes)
 
-        [self._queue.put(event) for event in events]
-        self._store(events, order_book)
-
-
-    def _get_ask_bid(self, asks, bids ):
-        try:
-            ask = asks[:,0][np.cumsum(asks[:,0]) >= self._vol][0]
-        except:
-            ask = asks[0,0]
-        try:
-            bid = bids[:,0][np.cumsum(bids[:,0]) >= self._vol][0]
-        except:
-            bid = bids[0,0]
-
-        return ask, bid
+        if self._queue is not None:
+            [self._queue.put(event) for event in events]
+        if self._storage is not None:
+            self._store(events, order_book)
 
 
     def _store(self, events, order_book):

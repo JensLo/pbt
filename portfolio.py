@@ -196,54 +196,6 @@ class Portfolio(object):
         self.history.append(pe)
         self.cur_dt = transaction.timestamp
 
-    def cash_dividend(self, dt, asset, div_per_share):
-        """
-        This causes the portfolio to receive a cash
-        dividend on a particular asset.
-        """
-        if dt < self.cur_dt:
-            raise PortfolioException(
-                'Dividend datetime (%s) is earlier than '
-                'current portfolio datetime (%s). Cannot '
-                'create dividend.' % (dt, self.cur_dt)
-            )
-        if asset not in self.pos_handler.positions:
-            raise PortfolioException(
-                'Asset %s not in portfolio so cannot '
-                'receive a dividend per share of %s.' % (
-                    asset.name, self._currency_format(div_per_share)
-                )
-            )
-        if div_per_share < 0.0:
-            raise PortfolioException(
-                'Dividend per share of %s is negative for '
-                'asset %s. Cannot create dividend.' % (
-                    self._currency_format(div_per_share), asset.name
-                )
-            )
-        quantity = self.pos_handler.positions[asset].quantity
-
-        # Some brokerages use the following rounding
-        # methodology # on their dividends:
-        total_div = math.floor(
-            (div_per_share * quantity) * 100.0
-        ) / 100.0
-
-        self.total_cash += total_div
-        self.total_value += total_div
-        description = "DIVIDEND %s %s %0.2f%s %s" % (
-            quantity, asset.name.upper(),
-            div_per_share, self.currency,
-            datetime.datetime.strftime(dt, "%d/%m/%Y")
-        )
-        pe = PortfolioEvent(
-            date=dt, type='dividend',
-            description=description,
-            debit=0.0, credit=total_div,
-            balance=round(self.total_cash, 2)
-        )
-        self.history.append(pe)
-        self.cur_dt = dt
 
     def update_market_value_of_asset(
         self, asset, current_trade_price, current_trade_date

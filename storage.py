@@ -6,7 +6,7 @@ import time
 import sys
 
 from tables.file import File as PyTablesFile
-from tables import Col
+from tables import Col, Int64Col, StringCol, 
 from numpy import dtype
 
 
@@ -35,10 +35,15 @@ class SafeHDFStore(PyTablesFile):
         os.remove(_lock)
 
 
+    def __getitem__(self, key):
+        return self._getTable(key)
+
+
+    
+
+
     def add(self,key, data, columns):
         print('Start Storing:', key)
-        if not key.startswith('/'):
-            key = '/'+key
         sys.stdout.flush()
         if not self._table_exists(key):
             table = self._createTable(key, columns, data)
@@ -56,6 +61,11 @@ class SafeHDFStore(PyTablesFile):
         print('Finished Storing:', key)
         sys.stdout.flush()
         print()
+
+
+    def get(self,key, columns=None):
+        return self._getTable(key)
+
 
 
     def _getGroup(self, key):
@@ -76,16 +86,22 @@ class SafeHDFStore(PyTablesFile):
         return group
 
     def _getTable(self, key):
-        group = self._getGroup(key)
+        if not key.startswith('/'):
+            key = '/'+key
+        self._getGroup(key)
         return self.get_node(key)
 
     def _table_exists(self, key):
+        if not key.startswith('/'):
+            key = '/'+key
         group = self._getGroup(key)
         key = key.split('/')[-1]
         return key in group._v_children.keys()
 
 
     def _createTable(self, key, columns, data):
+        if not key.startswith('/'):
+            key = '/'+key
         group = self._getGroup(key)
         key = key.split('/')[-1]
         des = self._getDescription(columns, data)
@@ -96,15 +112,33 @@ class SafeHDFStore(PyTablesFile):
         tmp = {}
         for col,value in zip(columns, data):
             
-            if not isinstance(value, (int, float, complex)):
-                value = '*'*64
+            if isinstance(int(value), (int, float, complex)):
+                tmp[col] = Int64Col()
 
-            elif np.asarray(value).dtype != object:
-                if isinstance(value, (int, float, complex)):
-                    tmp[col] = Col.from_dtype(dtype(dtype('int64')))
-                else:
-                    tmp[col] = Col.from_dtype(dtype(np.asarray(value).dtype))
+            elif isinstance(value, (str, bytes)):
+                tmp[col] = StringCol(itemsize=128)
+
+            else:
+                tmp[col] = Col.from_dtype(dtype(np.asarray(value).dtype))
 
         return tmp
+
+
+    def getTables(self):
+        tables=dict()
+        for node in self:
+            if isinstance(node, tables.table.Table):
+                tables[node._v_pathname] = node
+        return keys
+
+    def getValues(self):
+        keys=self.getKeys()
+        vals=[]
+        for key in keys:
+            vals.append(self.dTable.read()[key])
+        return vals
+
+    def getItems(self):
+        return list(zip(self.getKeys(),self.getValues()))
 
 
