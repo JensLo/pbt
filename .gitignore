@@ -102,3 +102,4 @@ ENV/
 *.h5
 *.hdf
 *.h5
+exchange/.DS_Store
