@@ -11,7 +11,7 @@ from .position_handler import PositionHandler
 from .utils.console import (
     string_colour, GREEN, RED, CYAN, WHITE
 )
-
+from .transaction import TRANSACTIONTYPE
 
 PortfolioEvent = namedtuple(
     'PortfolioEvent', 'date, type, description, debit, credit, balance'
@@ -43,8 +43,7 @@ class Portfolio(object):
     """
 
     def __init__(
-        self, start_dt, starting_cash=0.0,
-        currency="BTC", portfolio_id=None,
+        self, start_dt, starting_cash=0.0, portfolio_id=None,
         name=None
     ):
         """
@@ -56,104 +55,49 @@ class Portfolio(object):
         self.history = []
         self.start_dt = start_dt
         self.cur_dt = start_dt
-        self.currency = currency
-        self._set_currency()
         self.starting_cash = starting_cash
         self.portfolio_id = portfolio_id
         self.name = name
-        self.total_value = starting_cash
         self.total_cash = starting_cash
 
-    def _set_currency(self):
-        """
-        Apply the correct currency symbols. Currently
-        supports USD and GBP.
-        """
-        if self.currency == "BTC":
-            locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
-        elif self.currency == "USD":
-            locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
-        elif self.currency == "EUR":
-            locale.setlocale(locale.LC_ALL, 'en_US.UTF-8')
-        else:
-            raise PortfolioException(
-                'Currency of "%s" not currently supported yet. '
-                'Please create a Portfolio with GBP or USD as '
-                'currency.' % self.currency
-            )
-
-    def _currency_format(self, amount):
-        """
-        Format the amount in correct format for a paticular
-        currency. Currently supports USD and GBP.
-        """
-        #return locale.currency(amount, grouping=True)
-        return '%.8f'%(amount)
-
-    def subscribe_funds(self, dt, amount):
+    def deposit(self, transaction):
         """
         Credit funds to the portfolio.
         """
-        if dt < self.cur_dt:
+        if transaction.dt < self.cur_dt:
             raise PortfolioException(
                 'Subscription datetime (%s) is earlier than '
                 'current portfolio datetime (%s). Cannot '
                 'subscribe funds.' % (dt, self.cur_dt)
             )
-        if amount < 0:
+        if transaction.quantity < 0:
             raise PortfolioException(
                 'Cannot credit negative amount: '
                 '%s to the portfolio.' %
                 self._currency_format(amount)
             )
-        self.total_cash += amount
-        self.total_value += amount
-        pe = PortfolioEvent(
-            date=dt, type='subscription',
-            description="SUBSCRIPTION",
-            debit=0.0, credit=round(amount, 2),
-            balance=round(self.total_cash, 2)
-        )
-        self.history.append(pe)
-        self.cur_dt = dt
+        self.transact_asset(transaction)
 
-    def withdraw_funds(self, dt, amount):
+
+    def withdraw(self, transaction):
         """
         Withdraw funds from the portfolio if there is enough
         cash to allow it.
         """
         # Check that amount is positive and that there is
         # enough in the portfolio to withdraw the funds
-        if dt < self.cur_dt:
+        if transaction.dt < self.cur_dt:
             raise PortfolioException(
                 'Withdrawal datetime (%s) is earlier than '
                 'current portfolio datetime (%s). Cannot '
                 'withdraw funds.' % (dt, self.cur_dt)
             )
-        if amount < 0:
+        if transaction.quantity < 0:
             raise PortfolioException(
                 'Cannot debit negative amount: '
                 '%0.2f from the portfolio.' % amount
             )
-        if amount > self.total_cash:
-            raise PortfolioException(
-                'Not enough cash in the portfolio to '
-                'withdraw. %s withdrawal request exceeds '
-                'current portfolio cash balance of %s.' % (
-                    self._currency_format(amount),
-                    self._currency_format(self.total_cash)
-                )
-            )
-        self.total_cash -= amount
-        self.total_value -= amount
-        pe = PortfolioEvent(
-            date=dt, type='withdrawal',
-            description="WITHDRAWAL",
-            debit=round(amount, 2), credit=0.0,
-            balance=round(self.total_cash, 2)
-        )
-        self.history.append(pe)
-        self.cur_dt = dt
+        self.transact_asset(transaction)
 
     def transact_asset(self, transaction):
         """
@@ -166,33 +110,40 @@ class Portfolio(object):
                 'current portfolio datetime (%s). Cannot '
                 'transact assets.' % (tn.timestamp, self.cur_dt)
             )
-        tn_share_cost = tn.price * tn.quantity
-        tn_total_cost = tn_share_cost + tn.commission
-        if tn_total_cost > self.total_cash:
-            raise PortfolioException(
-                'Not enough cash in the portfolio to '
-                'carry out transaction. Transaction cost of %s '
-                'exceeds remaining cash of %s.' % (
-                    self._currency_format(tn_total_cost),
-                    self._currency_format(self.total_cash)
-                )
-            )
         self.pos_handler.transact_position(tn)
-        self.total_cash -= tn_total_cost
-        self.total_value -= tn.commission
+        direction = 1 if tn.type in (TRANSACTIONTYPE.BUY or TRANSACTIONTYPE.WITHDRAW) else -1
+        tn_share_cost = direction * tn.price * tn.quantity
+        tn_total_cost = tn_share_cost + tn.commission
 
-        # Form Portfolio history details
-        direction = "LONG" if tn.type > 0 else "SHORT"
-        description = "%s %s %s %0.2f %s" % (
-            direction, tn.quantity, tn.asset.name.upper(),
-            tn.price, datetime.datetime.strftime(tn.timestamp, "%d/%m/%Y")
+        
+        self.total_cash -= tn_total_cost
+
+        if tn.type in (TRANSACTIONTYPE.DEPOSIT, TRANSACTIONTYPE.WITHDRAW):
+            # Form Portfolio history details
+            direction = "DEPOSIT" if tn.type == RANSACTIONTYPE.DEPOSIT else "WIDTHDRAW"
+            description = "%s %s %s %0.2f %s" % (
+                direction, tn.quantity, tn.asset.name.upper(),
+                tn.price, datetime.datetime.strftime(tn.timestamp, "%d/%m/%Y")
+            )
+            pe = PortfolioEvent(
+                date=dt, type=direction,
+                description=description,
+                debit=round(amount, 2), credit=0.0,
+                balance=round(self.total_cash, 2)
         )
-        pe = PortfolioEvent(
-            date=tn.timestamp, type='asset_transaction',
-            description=description,
-            debit=round(tn_total_cost, 2), credit=0.0,
-            balance=round(self.total_cash, 2)
-        )
+        else:
+            # Form Portfolio history details
+            direction = "LONG" if tn.type > 0 else "SHORT"
+            description = "%s %s %s %0.2f %s" % (
+                direction, tn.quantity, tn.asset.name.upper(),
+                tn.price, datetime.datetime.strftime(tn.timestamp, "%d/%m/%Y")
+            )
+            pe = PortfolioEvent(
+                date=tn.timestamp, type='asset_transaction',
+                description=description,
+                debit=round(tn_total_cost, 2), credit=0.0,
+                balance=round(self.total_cash, 2)
+            )
         self.history.append(pe)
         self.cur_dt = transaction.timestamp
 
@@ -227,6 +178,11 @@ class Portfolio(object):
                 current_trade_price=current_trade_price,
                 current_trade_date=current_trade_date
             )
+
+    @property
+    def total_value(self):
+        return self.total_cash + self.pos_handler.total_market_value
+        
 
     def history_to_df(self):
         """

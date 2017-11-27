@@ -23,7 +23,7 @@
 from .asset import Asset
 
 
-class Equity(Asset):
+class Fiat(Asset):
     """Stores meta data about an equity stock or "share".
 
     Data includes its name, exchange, ticker symbol as
@@ -38,9 +38,6 @@ class Equity(Asset):
         The asset's original ticker symbol.
         TODO: This requires modification to handle proper
         ticker mapping.
-    exchange : Exchange
-        A reference to the Exchange that the asset is
-        trading on.
     """
 
     def __init__(
@@ -49,7 +46,6 @@ class Equity(Asset):
     ):
         self.name = name
         self.symbol = symbol
-        self.exchange = exchange
 
     @classmethod
     def from_dict(cls, asset_dict):
@@ -64,6 +60,5 @@ class Equity(Asset):
         """
         return {
             "name": self.name,
-            "symbol": self.symbol,
-            "exchange": self.exchange
+            "symbol": self.symbol
         }

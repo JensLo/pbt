@@ -3,8 +3,10 @@
 import numpy as np
 
 class TRANSACTIONTYPE:
-    BUY  = 1
-    SELL = 2
+    BUY       = 1
+    SELL      = 2
+    DEPOSIT   = 3
+    WITHDRAWL = 4
 
 
 class Transaction(object):
@@ -27,14 +29,18 @@ class Transaction(object):
         The trading commission
     """
 
-    def __init__(self, asset, price, quantity, timestamp, commission, order_ID):
+    def __init__(self, asset, price, quantity, timestamp, commission, transactiontype, trans_ID):
         self.asset = asset
         self.price = (price) #Decimal
         self.quantity = (quantity)
         self.timestamp = timestamp
         self.commission = (commission)
-        self.order_ID = order_ID
-        self.type = TRANSACTIONTYPE.BUY if self.quantity > 0 else TRANSACTIONTYPE.SELL
+        self.trans_ID = trans_ID
+        self.type = self._type(transactiontype)
+
+    def _type(self, transactiontype):
+        return eval('TRANSACTIONTYPE.%s'%transactiontype.upper())
+
 
     def __repr__(self):
         """
@@ -42,8 +48,8 @@ class Transaction(object):
         to allow full recreation of the object.
         """
         return "%s(asset=%s, quantity=%s, dt=%s, " \
-            "price=%s, order_id=%s, type=%s)" % (
+            "price=%s, trans_id=%s, type=%s)" % (
                 type(self).__name__, self.asset.name,
                 self.quantity, self.timestamp,
-                self.price, self.order_ID, self.type
+                self.price, self.trans_ID, self.type
             )

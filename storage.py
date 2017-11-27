@@ -6,9 +6,11 @@ import time
 import sys
 
 from tables.file import File as PyTablesFile
-from tables import Col, Int64Col, StringCol, 
+from tables import Col, Int64Col, StringCol, table
 from numpy import dtype
 
+def _shape(array):
+    return len(array)
 
 class SafeHDFStoreException(Exception):
     pass
@@ -18,7 +20,8 @@ class SafeHDFStore(PyTablesFile):
                  root_uep="/", filters=None, **kwargs):
         probe_interval = kwargs.pop("probe_interval", 1)
         self._lock = "%s.lock" % filename
-        while True:
+        self.mode = mode
+        while mode == 'w' or mode == 'a':
             try:
                 self._flock = os.open(self._lock, os.O_CREAT |
                                                   os.O_EXCL |
@@ -30,80 +33,57 @@ class SafeHDFStore(PyTablesFile):
         super(SafeHDFStore, self).__init__(filename, mode, title, 
                                            root_uep, filters, **kwargs)
 
-        self.__dict__.update(self.getTables())
+        #self.__dict__.update(self.getTables())
 
     def __exit__(self, *args, **kwargs):
-        _flock = self._flock
-        _lock = self._lock
+        _mode = self.mode
+        if self.mode == 'w' or self.mode == 'a':
+            _flock = self._flock
+            _lock = self._lock
+            
         super(SafeHDFStore, self).__exit__(*args, **kwargs)
-        os.close(_flock)
-        os.remove(_lock)
+        if _mode == 'w' or _mode == 'a':
+            os.close(_flock)
+            os.remove(_lock)
 
 
     def __getitem__(self, key):
         if key.count('/')==0:
             if not key.startswith('/'):
-            key = '/'+key
-
+                key = '/'+key
         return self._getTable(key)
 
             
-    def __setitem__(self, key, value):
-        if isinstance(value, tables.table.Table):
-            if key.count('/')==0:
+    def __setitem__(self, key, data):
+        if self._table_exists(key):
+            if not key.startswith('/'):
+                key = '/'+key
+                _table = self._getTable(key)
+                if _shape(data) == _shape(_table.colnames):
+                    for col, value in zip(_table.colnames, data):
+                        _table.row[col] = value
 
+                    _table.row.append()
+                    _table.flush()
+                else:
+                    raise SafeHDFStoreException(
+                        'data shape is (%s) and table shape is (%s)'%(_shape(data), _shape(_table.colnames))
+                    )
         else:
             raise SafeHDFStoreException(
-                'Value needs to be of type "tables.table.Table" but is "%s".' %(type(value))
+                'key needs to point to a table'
             )
-            break
             
-        if key in self.keys():
-            self.__D__[key] = value
-            return
-        if key.count('/')==0:
-            _key = self._getDeviceChannelName(key)
-            if _key is None:
-                raise KeyError('Channel ' + str(key) + ' not found')
-                return key
-            else:
-                key = _key
 
-        key = key.split('/')
-        try:
-            self.__D__[key[0]][key[1]] = value
-        except:
-            if key[0] not in self.keys():
-                self.__D__[key[0]] = channellist()
-                self.__dict__[key[0]] = self.__D__[key[0]]
-            self.__D__[key[0]][key[1]] = value
-
-
-
-    def add(self, key, data, columns):
-        print('Start Storing:', key)
-        sys.stdout.flush()
+    def add(self, key, data, columns=None):
         if not self._table_exists(key):
-            table = self._createTable(key, columns, data)
-        else:
-            table = self._getTable(key)
-
-        for col, value in zip(columns, data):
-            if col not in ('time', 'date', 't'):
-                table.row[col] = int(value*1e8)
-            else:
-                table.row[col] = int(value)
-
-        table.row.append()
-        table.flush()
-        print('Finished Storing:', key)
-        sys.stdout.flush()
-        print()
-
-
-    def get(self,key, columns=None):
-        return self._getTable(key)
-
+            if columns is None:
+                raise SafeHDFStoreException(
+                        '"columns" argument is needed to create a new table @%s'%(key)
+                    )
+                return
+            self._createTable(key, columns, data)
+        self.__setitem__(key, data)
 
 
     def _getGroup(self, key):
@@ -162,21 +142,28 @@ class SafeHDFStore(PyTablesFile):
         return tmp
 
 
-    def getTables(self):
-        tables=dict()
+    @property    
+    def tables(self):
+        _tables=dict()
         for node in self:
-            if isinstance(node, tables.table.Table):
-                tables[node._v_pathname] = node
-        return keys
+            if isinstance(node, table.Table):
+                _tables[node._v_pathname] = node
+        return _tables
 
-    def getValues(self):
-        keys=self.getKeys()
-        vals=[]
-        for key in keys:
-            vals.append(self.dTable.read()[key])
-        return vals
+    @property
+    def keys(self):
+        _keys=[]
+        for node in self:
+            if isinstance(node, table.Table):
+                _keys.append(node._v_pathname)
+        return _keys
 
-    def getItems(self):
-        return list(zip(self.getKeys(),self.getValues()))
+    def read(self, key, start=None, stop=None, step=None, field=None):
+        return self._getTable(key).read(tart, stop, step, field)
 
+    def read_where(key, condition, condvars=None, field=None, start=None, stop=None, step=None):
+        return self._getTable(key).read_where(condition, condvars, field, start, stop, step)
+
+    def where(key, condition, condvars=None, start=None, stop=None, step=None):
+        return self._getTable(key).where(condition, condvars, start, stop, step)
 
