@@ -103,3 +103,5 @@ ENV/
 *.hdf
 *.h5
 exchange/.DS_Store
+fd85b6ee-e3ac-457c-a7fb-c9375162d9eb.dmp
+*.dmp
